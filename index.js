@@ -14,7 +14,16 @@
 //    الفعلية، مش حالة الأوردر. القاعدة الكاملة في `ecommoda-order-lifecycle`
 //    قاعدة ١٧ و`references/package-whereabouts.md`.
 // ══════════════════════════════════════════════════════════════
-const TOOL_NAME      = 'package_transfer_to_office';
+// 🔴 **السجل مشترك** — الأداة بتكتب تحت `metafields_change` زي سكانرَي بوسطة
+//    بالظبط (قرار أحمد 15-09-2026)، والفصل بين الكُتّاب بمفتاح
+//    **`extra.sourceTool`**.
+// ⚠️ **ونتيجة مباشرة:** أي استعلام خط أساس على `metafields_change` **لازم
+//    يفلتر على `extra.sourceTool`** — من غيره بيعدّ صفوف تلات أدوات مع بعض.
+//    ودي بالظبط اللي التلات endpoints بتاعة السجل بتعملها تحت (`logParamsFrom`).
+// ⚠️ و`type` بيفضل **من القيم المسجّلة أصلاً** للصف ده (`update` · `rejected`)
+//    — صفر قيمة `type` جديدة، فـRule 7 مالهاش نطاق جديد هنا.
+const TOOL_NAME      = 'metafields_change';
+const SOURCE_TOOL    = 'package_transfer_to_office';
 const WORKER_VERSION = '1.0.0';
 
 // ══════════════════════════════════════════════════════════════
@@ -138,7 +147,7 @@ const LOG_EXPORT_MAX = 2000;
 //    الجدول بيقول إنه مفلتر وهو مش مفلتر — وده أسوأ من فلتر مش موجود.
 //    ⛔ أي نسخ من المهارة فوق الكتلة دي بيشيل الفلترين من غير أي خطأ.
 function buildLogFilterSQL(select, {
-  tool      = null,
+  tool      = null, sourceTool = null,
   employee  = null, employees = null,
   type      = null, types     = null,
   results   = null, machines  = null,
@@ -152,6 +161,12 @@ function buildLogFilterSQL(select, {
   const typs = Array.isArray(types)     && types.length     ? types     : (type     ? [type]     : []);
 
   if (tool) { sql += ' AND tool = ?'; b.push(tool); }
+  // 🔴 **الفلتر ده مش اختياري** — `metafields_change` سجل مشترك بين تلات أدوات،
+  //    ومن غيره تاب السجل بتاع الأداة دي بيعرض صفوف سكانرَي بوسطة كمان.
+  //    ⚠️ والقيمة **مش من العميل** — `logParamsFrom` بتحطها ثابتة.
+  if (sourceTool) {
+    sql += ` AND json_extract(extra, '$.sourceTool') = ?`; b.push(sourceTool);
+  }
   if (emps.length) {
     sql += ` AND employee IN (${emps.map(() => '?').join(',')})`; b.push(...emps);
   }
@@ -208,13 +223,16 @@ async function getLogsExport(db, filters = {}) {
   return (await db.prepare(q).bind(...b, LOG_EXPORT_MAX).all()).results;
 }
 
-function logParamsFrom(url, tool) {
+function logParamsFrom(url, tool, sourceTool) {
   const csv = (k) => (url.searchParams.get(k) || '')
     .split(',').map(s => s.trim()).filter(Boolean);
   const employees = csv('employees'), types = csv('types');
   const results = csv('results'), machines = csv('machines');
   return {
     tool,
+    // ⚠️ ثابتة من الكود — ممنوع تيجي من الـ query string، وإلا أي طلب معاه
+    //    السر يقدر يقرا سجل أداة تانية على نفس الـ `tool`.
+    sourceTool,
     employees: employees.length ? employees : null,
     employee:  url.searchParams.get('employee') || null,
     types:     types.length ? types : null,
@@ -633,7 +651,8 @@ async function handleScan(env, request) {
     const logged = await safeLog(env, {
       tool: TOOL_NAME, type: 'rejected', employee,
       notes: reason,
-      extra: { result: 'rejected', stage: 'lookup', code: 'not_found', scanned: code },
+      extra: { sourceTool: SOURCE_TOOL, result: 'rejected', stage: 'lookup',
+               code: 'not_found', scanned: code },
     });
     return json({ ok: true, result: 'rejected', code: 'not_found',
       message: reason, scanned: code, ...logged }, 200, request);
@@ -656,7 +675,8 @@ async function handleScan(env, request) {
       orderId: order.orderId, orderName: order.orderName,
       valueBefore: currentWhereabouts(order, v.machine), valueAfter: null,
       notes: v.message,
-      extra: { result, stage: 'lookup', code: v.code, machine: machineLabel(v.machine),
+      extra: { sourceTool: SOURCE_TOOL, result, stage: 'lookup', code: v.code,
+               machine: machineLabel(v.machine),
                zone: order.zone, courier: order.courier, s1: order.s1, s2: order.s2 },
     });
     return json({ ok: true, result, code: v.code, message: v.message,
@@ -672,11 +692,15 @@ async function handleScan(env, request) {
 
   const result = error ? 'error' : (v.warnings && v.warnings.length ? 'warning' : 'success');
   const logged = await safeLog(env, {
-    tool: TOOL_NAME, type: 'transfer', employee,
+    // ⚠️ `update` مش `transfer` — القيمة دي **مسجّلة أصلاً** لصف
+    //    `metafields_change` في `ecommoda-constants` §7، والفصل بيحصل بـ
+    //    `extra.sourceTool`. قيمة `type` جديدة كانت هتفتح بند Rule 7 بلا داعي.
+    tool: TOOL_NAME, type: 'update', employee,
     orderId: order.orderId, orderName: order.orderName,
     valueBefore: before, valueAfter: error ? null : WA_VALUES.OFFICE,
     notes: error || (v.warnings || []).join(' · ') || null,
     extra: {
+      sourceTool: SOURCE_TOOL,
       result, stage: 'write', machine: machineLabel(v.machine),
       zone: order.zone, courier: order.courier, s1: order.s1, s2: order.s2,
       packedAt: v.machine === 's1' ? order.packedAtS1 : order.packedAtS2,
@@ -738,9 +762,12 @@ async function handleDiag(env, request) {
 
   // ② D1
   try {
-    const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM logs WHERE tool = ?')
-      .bind(TOOL_NAME).first();
-    push(true, 'D1 (DB)', `متصلة — ${row?.n ?? 0} صف للأداة دي`);
+    // ⚠️ العدّ بـ`sourceTool` كمان — من غيره الرقم بيشمل صفوف سكانرَي بوسطة
+    //    وبيقول «فيه صفوف» على أداة لسه ما كتبتش ولا صف.
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM logs WHERE tool = ? AND json_extract(extra, '$.sourceTool') = ?`
+    ).bind(TOOL_NAME, SOURCE_TOOL).first();
+    push(true, 'D1 (DB)', `متصلة — ${row?.n ?? 0} صف للأداة دي (من سجل ${TOOL_NAME} المشترك)`);
   } catch (e) {
     push(false, 'D1 (DB)', `FAILED: ${e.message}`,
          'binding اسمه `DB` في `wrangler.toml` — أي اسم تاني = كتابة فاشلة بصمت');
@@ -790,8 +817,8 @@ async function handleDiag(env, request) {
   const origin = request.headers.get('Origin') || '(بلا Origin)';
   push(ALLOWED_ORIGINS.includes(origin), 'الـ Origin', `${origin} · المسموح: ${ALLOWED_ORIGINS.join(', ')}`);
 
-  return json({ ok: checks.every(c => c.ok), version: WORKER_VERSION, tool: TOOL_NAME, checks },
-              200, request);
+  return json({ ok: checks.every(c => c.ok), version: WORKER_VERSION,
+                tool: TOOL_NAME, sourceTool: SOURCE_TOOL, checks }, 200, request);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -818,7 +845,8 @@ export default {
     try {
       // ─── §CONFIG ──────────────────────────────────────────────
       if (action === 'get_config')
-        return json({ ok: true, version: WORKER_VERSION, WORKER_VERSION, tool: TOOL_NAME }, 200, request);
+        return json({ ok: true, version: WORKER_VERSION, WORKER_VERSION,
+                      tool: TOOL_NAME, sourceTool: SOURCE_TOOL }, 200, request);
 
       if (action === 'diag') return await handleDiag(env, request);
 
@@ -848,7 +876,7 @@ export default {
 
       // ─── §LOG-ENDPOINTS ───────────────────────────────────────
       if (action === 'get_logs') {
-        const p = logParamsFrom(url, TOOL_NAME);
+        const p = logParamsFrom(url, TOOL_NAME, SOURCE_TOOL);
         // 🔴 parseInt('abc') → NaN → بيوصل لـ D1 كـ bind ويرجّع خطأ غامض.
         const limitRaw  = parseInt(url.searchParams.get('limit')  || '100', 10);
         const offsetRaw = parseInt(url.searchParams.get('offset') || '0',   10);
@@ -863,12 +891,12 @@ export default {
       }
 
       if (action === 'get_logs_count') {
-        const total = await getLogsCount(env.DB, logParamsFrom(url, TOOL_NAME));
+        const total = await getLogsCount(env.DB, logParamsFrom(url, TOOL_NAME, SOURCE_TOOL));
         return json({ ok: true, total }, 200, request);
       }
 
       if (action === 'get_logs_export') {
-        const p = logParamsFrom(url, TOOL_NAME);
+        const p = logParamsFrom(url, TOOL_NAME, SOURCE_TOOL);
         const [entries, total] = await Promise.all([
           getLogsExport(env.DB, p),
           getLogsCount(env.DB, p),

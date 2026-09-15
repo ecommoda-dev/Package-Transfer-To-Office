@@ -28,7 +28,8 @@
 ```
 الـ Worker  : https://package-transfer-to-office-worker.ecommoda-dev.workers.dev
 الواجهة     : https://ecommoda-dev.github.io/Warehouse-Operations-Center/office-transfer.html
-tool في D1  : package_transfer_to_office
+tool في D1  : metafields_change        ← 🔴 سجل **مشترك**
+extra.sourceTool : package_transfer_to_office   ← ده اللي بيفصل الأداة عن غيرها
 مجموعة السر : warehouse_ops          ← 🔴 مش سر فريد للأداة دي
 ```
 
@@ -123,7 +124,7 @@ metafields.custom.package_whereabouts_s1:'Warehouse'  →  10,000 صف (مقيس
 ```
 
 > 🔴 **قاعدة عدم الضياع:** كل سكانة بتسيب **صف واحد بالظبط** في D1 — يا
-> `transfer` يا `rejected`. صفر صفوف = سؤال «الأوردر ده اتسكن ولا لأ؟» مالوش
+> `update` يا `rejected`. صفر صفوف = سؤال «الأوردر ده اتسكن ولا لأ؟» مالوش
 > إجابة بعد ما الشاشة تتقفل.
 > ⚠️ **الاستثناء الوحيد `needs_ack`** — مفيش قرار اتاخد لسه، والسكانة
 > **هتكمّل** بصف كامل بعد الإقرار. صف هنا كان هيبقى صفّين لسكانة واحدة.
@@ -144,14 +145,20 @@ metafields.custom.package_whereabouts_s1:'Warehouse'  →  10,000 صف (مقيس
 ## D1
 
 ```
-tool  : package_transfer_to_office
-type  : transfer · rejected
+tool             : metafields_change              ← سجل مشترك بين أكتر من أداة
+extra.sourceTool : package_transfer_to_office     ← الفاصل الوحيد بين الكُتّاب
+type             : update · rejected
 ```
 
 | `type` | `extra.result` | معناه |
 |---|---|---|
-| `transfer` | `success` · `warning` · `error` | اتبعت لشوبيفاي — نجح أو اترفض |
+| `update` | `success` · `warning` · `error` | اتبعت لشوبيفاي — نجح أو اترفض |
 | `rejected` | `rejected` · `already` | اتوقف **قبل** أي محاولة |
+
+> ✅ **صفر قيمة `type` جديدة** — `update` و`rejected` **مسجّلتين أصلاً** لصف
+> `metafields_change` في `ecommoda-constants` §7، فـRule 7 مالهاش نطاق جديد
+> هنا. اللي **لسه مطلوب** هو تسجيل الأداة في **جدول الكُتّاب** (§7 بيقول
+> صراحةً: أي أداة جديدة بتكتب تحت `metafields_change` **تسجّل نفسها**).
 
 مفاتيح `extra`: `result` · `stage` (`lookup`/`write`) · `machine` (`S1`/`S2`) ·
 `zone` · `courier` · `s1` · `s2` · `packedAt` · `packedBy` · `code` ·
@@ -166,16 +173,30 @@ type  : transfer · rejected
 > 🔴 **استعلام خط الأساس لازم يفلتر على `extra.result`** — الاستعلام اللي
 > بيعدّ `type` بس **بيقيس المحاولات مش الكتابة الفعلية**:
 > ```sql
-> SELECT COUNT(*) FROM logs WHERE tool = 'package_transfer_to_office' AND type = 'transfer' AND json_extract(extra,'$.result') = 'success';
+> SELECT COUNT(*) FROM logs WHERE tool = 'metafields_change' AND json_extract(extra,'$.sourceTool') = 'package_transfer_to_office' AND type = 'update' AND json_extract(extra,'$.result') = 'success';
 > ```
+> ⚠️ **و`extra.sourceTool` جزء من الاستعلام مش تزويق** — من غيره الرقم بيشمل
+> صفوف سكانرَي بوسطة.
 
-> 🔴 **ليه `tool` خاص بالأداة مش `metafields_change`؟** الجدول ده هو المصدر
-> الوحيد لتاريخ **حالة الأوردر** (`ecommoda-order-lifecycle` قاعدة ٩)، وصف
-> `type = 'update'` جوّاه بيتقري انتقال حالة. والأداة دي **مابتلمسش
-> `manual_status` ولا `status_2_r_e` خالص** — بتكتب عهدة الطرد، وهي محور تاني
-> تمامًا. صف عهدة جوّه سجل الحالة كان هيضخّم أي عدّ ساذج لانتقالات الحالة.
-> ⚠️ **البند ده قابل للمراجعة قبل أول تشغيل حي بس** — بعدها التغيير بيحتاج
-> `ecommoda-tool-rename` (وبييتّم الصفوف القديمة).
+> 🔴 **ليه السجل المشترك؟ (قرار أحمد 15-09-2026)** الأداة بتكتب ميتافيلد،
+> و`metafields_change` هو **سجل تغيير الميتافيلد المشترك** في الستاك — نفس
+> مكان سكانرَي بوسطة بالحرف، وبنفس نمط الفصل (`extra.sourceTool`).
+> ⚠️ **والثمن لازم يتقال:** الصف ده كمان هو المصدر اللي
+> `ecommoda-order-lifecycle` قاعدة ٩ بتسمّيه لتاريخ **حالة الأوردر**. والأداة
+> دي **مابتلمسش `manual_status` ولا `status_2_r_e` خالص** — بتكتب **عهدة
+> الطرد**، محور تاني تمامًا. يعني أي استعلام ساذج بيعدّ
+> `tool='metafields_change' AND type='update'` بقى **بيضخّم انتقالات الحالة**
+> بصفوف عهدة.
+> ⛔ **اللي بيمنع ده هو `extra.sourceTool` — وهو إلزامي في كل استعلام**، مش
+> اختياري. والـ Worker بيطبّقه في التلات endpoints بتاعة السجل وفي `diag`.
+
+> 🔴 **انحراف موثّق عن `ecommoda-constants` §7 — مفتاح `sourceTool` مش
+> `source`.** §7 بتقول: «أي أداة جديدة تكتب تحت `metafields_change` تستخدم
+> **`extra.source`** (مش `sourceTool`)». **قرار أحمد 15-09-2026: يبقى
+> `sourceTool`** — عشان يبقى **مطابق حرفيًا** لسكانرَي بوسطة، فأي استعلام
+> بيفصل الكُتّاب بيبقى بمفتاح واحد بدل اتنين.
+> ⚠️ **والانحراف ده لازم يتسجّل مع تسجيل الأداة في جدول الكُتّاب** — وإلا أول
+> جرد بيتكتب على `extra.source` بيرجّع **صفر صف** للأداة دي، بلا أي خطأ.
 
 ## CORS
 
@@ -193,7 +214,7 @@ const ALLOWED_ORIGINS = ['https://ecommoda-dev.github.io'];
 | ② | ربط Workers Builds على الريبو ده (`main`) | أي push مابينشرش |
 | ③ | **`WORKER_SECRET` = قيمة مجموعة `warehouse_ops`** → **Promote** | كل نداء `401` |
 | ④ | `CLIENT_ID` + `CLIENT_SECRET` → **Promote** | OAuth بيفشل والطابور بيقع |
-| ⑤ | تسجيل `package_transfer_to_office` في `ecommoda-constants` §7 | خرق Rule 7 (التسجيل **قبل** أول `writeLog`) |
+| ⑤ | تسجيل الأداة في **جدول كُتّاب `metafields_change`** في `ecommoda-constants` (§7 · `references/d1-history.md`) — ومعاه انحراف `sourceTool` | جرد بيعدّ الصف ده كأداة واحدة **بيغلط**، وجرد بيدوّر على `extra.source` **بيرجّع صفر** |
 
 > 🔴 **③ أهم واحدة فيهم، والفخّ إن `WORKER_SECRET` هنا مش قيمة فريدة.** الهب
 > بيبعت **سر واحد** لكل الـ Workers من مفتاح `localStorage` واحد
@@ -214,7 +235,7 @@ const ALLOWED_ORIGINS = ['https://ecommoda-dev.github.io'];
 ```bash
 cd Warehouse-Operations-Center
 npm i playwright postcss --no-save
-node docs/office-check.mjs      # ٥٧ بند
+node docs/office-check.mjs      # ٥٨ بند
 ```
 
 > 🔴 **تلات عيلات فشل صامتة الملف ده اتكتب عشانها**, ومستحيل يتمسكوا
@@ -232,13 +253,15 @@ node docs/office-check.mjs      # ٥٧ بند
 
 ## مسائل مفتوحة
 
-- 🔴 **الخمس خطوات اليدوية فوق — كلها حاجزة** (إنشاء الـ Worker · Builds ·
-  السر · OAuth · التسجيل في `ecommoda-constants` §7).
-- 🔴 **تسجيل `package_transfer_to_office` بقيم `transfer`/`rejected` في
-  `ecommoda-constants` §7** — **صف `tool` جديد بالكامل**. Rule 7 بتقول التسجيل
-  **قبل** أول `writeLog`، والقاعدة دي **اتخرقت ست مرات** في الستاك ده وكل مرة
-  كان الادعاء موجود في `CLAUDE.md` بتاع الأداة. **التحقق الوحيد المقبول
-  `grep` على المهارة نفسها.**
+- 🔴 **الأربع خطوات النشر اليدوية فوق — كلها حاجزة** (إنشاء الـ Worker ·
+  Builds · السر · OAuth).
+- 🔴 **تسجيل الأداة ككاتب جديد في `metafields_change`** (`ecommoda-constants`
+  §7 · `references/d1-history.md`) — **مش صف `tool` جديد**: `update` و
+  `rejected` مسجّلتين أصلاً، فصفر قيمة `type` جديدة وRule 7 مالهاش نطاق جديد.
+  اللي مطلوب: الأداة تتسجّل في **جدول الكُتّاب**، ومعاها **انحراف
+  `extra.sourceTool` بدل `extra.source`** (قرار أحمد).
+  ⚠️ من غير ده أي جرد بيعدّ `metafields_change` كأداة واحدة **بيغلط**، وأي
+  جرد بيدوّر على `extra.source` **بيرجّع صفر صف** للأداة دي — **بلا أي خطأ**.
 - 🔴 **الأداة التانية (شبكة الأمان) لسه ما اتعملتش** — «الطرد اللي عهدته
   `Office` والأوردر ملغي/مرتجع → سكان يرجّعه `Warehouse`». من غيرها **الطرد
   المنسي في المكتب لسه بند مفتوح في الواقع** حتى والحقل بيتكتب:
@@ -271,8 +294,9 @@ node docs/office-check.mjs      # ٥٧ بند
 
 آخر مطابقة: 15-09-2026 · الـ Worker `1.0.0`
 🔴 معلّقة: **إنشاء الـ Worker + ربط Builds + `WORKER_SECRET` (سر `warehouse_ops`)
-+ `CLIENT_ID`/`CLIENT_SECRET` → Promote** · **تسجيل `package_transfer_to_office`
-في `ecommoda-constants` §7** · تحديث `ecommoda-order-lifecycle`
++ `CLIENT_ID`/`CLIENT_SECRET` → Promote** · **تسجيل الأداة ككاتب جديد على
+`metafields_change` في `ecommoda-constants` §7 (بقيمة `extra.sourceTool`)** ·
+تحديث `ecommoda-order-lifecycle`
 (`package-whereabouts.md` §5: الأداة بقت **أداتين** مش واحدة)
 
 ---
