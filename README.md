@@ -2,7 +2,7 @@
 
 # قسم تسليمات المكتب — Package Transfer To Office
 
-![worker](https://img.shields.io/badge/worker-v1.0.0-blue)
+![worker](https://img.shields.io/badge/worker-v1.1.0-blue)
 
 **Worker بس — مفيش واجهة في الريبو ده.**
 
@@ -29,7 +29,7 @@
 GET  ?action=get_config           نسخة الـ Worker
 GET  ?action=diag                 فحص ذاتي بلا كتابة (بيقرا تعريف الميتافيلد الحيّ)
 GET  ?action=get_employees        فلتر الموظف في تاب السجل
-GET  ?action=get_ready_to_office  أوردرات Ready (الماكينتين) بحقولها الخام
+GET  ?action=get_ready_to_office  أوردرات Ready من 2026-04-01 فأحدث بحقولها الخام
 POST ?action=scan                 قراءة حيّة + حكم + metafieldsSet + صف D1
 GET  ?action=get_logs[_count|_export]
 ```
