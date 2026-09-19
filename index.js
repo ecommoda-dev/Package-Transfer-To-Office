@@ -24,7 +24,7 @@
 //    — صفر قيمة `type` جديدة، فـRule 7 مالهاش نطاق جديد هنا.
 const TOOL_NAME      = 'metafields_change';
 const SOURCE_TOOL    = 'package_transfer_to_office';
-const WORKER_VERSION = '1.0.0';
+const WORKER_VERSION = '1.1.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
@@ -70,6 +70,22 @@ const COURIER_BOSTA = 'Bosta';
 //                                         لـ100 من غير ما تقرا actualQueryCost.
 const QUEUE_PAGE_SIZE = 50;
 const QUEUE_MAX_PAGES = 6;          // حارس حلقة — 300 أوردر لكل ماكينة
+
+// 🔴 **أرضية تاريخ الأوردر — قرار أحمد 19-09-2026.** الطابور بيعرض الأوردرات
+//    اللي **اتعملت من 01-04-2026** فأحدث. أي أوردر أقدم من كده **مش بيظهر**.
+// ⚠️ **وهي أرضية ثابتة مش نافذة متحرّكة** — القيمة مكتوبة بالحرف ومابتتحركش
+//    مع الوقت. ⛔ ممنوع تتحوّل لـ«آخر N يوم»: النافذة المتحرّكة بتخفي الطرد
+//    القديم المنسي **بالظبط لما يبقى منسي فعلاً**، وهو الطرد اللي الأداة
+//    اتعملت عشانه.
+// ⚠️ **والفلتر على `created_at` مش `updated_at`** — تاريخ **الأوردر** هو
+//    اللي الموظف بيقراه في الجدول وبيتصرّف عليه؛ `updated_at` بيتحرّك مع أي
+//    تعديل (حتى كتابة الميتافيلد بتاعتنا نفسها)، فكان هيدّي أرضية بتتزحلق.
+// ⚠️ **والصيغة `YYYY-MM-DD` بتتقرا UTC عند شوبيفاي** — يوم فرق على أرضية
+//    ثابتة مالوش أثر عملي، فمفيش تحويل توقيت هنا عن قصد.
+// 🔴 **وهي أرضية عرض — مش شرط أهلية.** الأوردر الأقدم منها **بيتسكن عادي**
+//    والـ Worker بيكتب عليه؛ هو مش في القايمة وبس. ⛔ ممنوع تتحط في
+//    `evaluate`.
+const ORDERS_SINCE = '2026-04-01';
 const SHOPIFY_API_VERSION = '2026-01';
 
 // ══════════════════════════════════════════════════════════════
@@ -446,9 +462,13 @@ async function handleReadyQueue(env, request) {
   assertEnv(env, 'shopify');
   const token = await getAccessToken(env);
 
+  // ⚠️ الأرضية بتتحط على **الاستعلامين** — واحد من غيرها معناه إن ماكينة
+  //    بتعرض أقدم من التانية، والجدول بيخلط النطاقين بلا أي إشارة.
+  const floor = ` AND created_at:>=${ORDERS_SINCE}`;
+
   const [a, b] = await Promise.all([
-    fetchReadyPage(env, token, `metafields.custom.manual_status:'${S1_STATUS.READY}'`),
-    fetchReadyPage(env, token, `metafields.custom.status_2_r_e:'${S2_STATUS.READY}'`),
+    fetchReadyPage(env, token, `metafields.custom.manual_status:'${S1_STATUS.READY}'${floor}`),
+    fetchReadyPage(env, token, `metafields.custom.status_2_r_e:'${S2_STATUS.READY}'${floor}`),
   ]);
 
   const byId = new Map();
@@ -461,6 +481,9 @@ async function handleReadyQueue(env, request) {
     ok: true,
     orders: [...byId.values()],
     truncated: a.truncated || b.truncated,
+    // 🔴 الأرضية بترجع في الرد عشان **الواجهة تعرضها من هنا** — مش مكتوبة
+    //    بالإيد هناك. رقمان يفترقوا في صمت هو درس R1 بالحرف.
+    ordersSince: ORDERS_SINCE,
     fetchedAt: new Date().toISOString(),
   }, 200, request);
 }
@@ -808,12 +831,17 @@ async function handleDiag(env, request) {
     push(false, 'شوبيفاي', `FAILED: ${e.message}`);
   }
 
-  // ④ تكلفة الاستعلام — الاقتراب من السقف مابيبانش غير بانفجار دفعة كاملة
+  // ④ أرضية تاريخ الأوردر — معلومة، مش نجاح ولا فشل
+  push(true, 'أرضية تاريخ الأوردر', `الطابور بيعرض أوردرات من ${ORDERS_SINCE} فأحدث · `
+    + `سقف ${QUEUE_PAGE_SIZE * QUEUE_MAX_PAGES} أوردر لكل ماكينة`,
+    'الأرضية عرض بس — الأوردر الأقدم منها بيتسكن عادي والـ Worker بيكتب عليه');
+
+  // ⑤ تكلفة الاستعلام — الاقتراب من السقف مابيبانش غير بانفجار دفعة كاملة
   push(true, 'تكلفة استعلام شوبيفاي', _lastThrottle
     ? `currentlyAvailable=${_lastThrottle.currentlyAvailable} / ${_lastThrottle.maximumAvailable} · restoreRate=${_lastThrottle.restoreRate}/s`
     : 'لسه مفيش استعلام في الاستدعاء ده');
 
-  // ⑤ الأصل
+  // ⑥ الأصل
   const origin = request.headers.get('Origin') || '(بلا Origin)';
   push(ALLOWED_ORIGINS.includes(origin), 'الـ Origin', `${origin} · المسموح: ${ALLOWED_ORIGINS.join(', ')}`);
 
