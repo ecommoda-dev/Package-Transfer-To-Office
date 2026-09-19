@@ -24,7 +24,7 @@
 //    — صفر قيمة `type` جديدة، فـRule 7 مالهاش نطاق جديد هنا.
 const TOOL_NAME      = 'metafields_change';
 const SOURCE_TOOL    = 'package_transfer_to_office';
-const WORKER_VERSION = '1.1.0';
+const WORKER_VERSION = '1.2.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
@@ -71,21 +71,37 @@ const COURIER_BOSTA = 'Bosta';
 const QUEUE_PAGE_SIZE = 50;
 const QUEUE_MAX_PAGES = 6;          // حارس حلقة — 300 أوردر لكل ماكينة
 
-// 🔴 **أرضية تاريخ الأوردر — قرار أحمد 19-09-2026.** الطابور بيعرض الأوردرات
-//    اللي **اتعملت من 01-04-2026** فأحدث. أي أوردر أقدم من كده **مش بيظهر**.
-// ⚠️ **وهي أرضية ثابتة مش نافذة متحرّكة** — القيمة مكتوبة بالحرف ومابتتحركش
-//    مع الوقت. ⛔ ممنوع تتحوّل لـ«آخر N يوم»: النافذة المتحرّكة بتخفي الطرد
-//    القديم المنسي **بالظبط لما يبقى منسي فعلاً**، وهو الطرد اللي الأداة
-//    اتعملت عشانه.
+// 🔴 **أرضية تاريخ الأوردر — رجعت نافذة متحرّكة (v1.2.0 · قرار أحمد
+//    19-09-2026 · §٩ في `docs/query-cost-experiment.md` بريبو الهب)، وده
+//    تراجع صريح عن قرار v1.1.0 (الأرضية الثابتة `2026-04-01`).**
+//    ⚠️ **نفس القيمة بالحرف في `Package-Transfer-To-Warehouse`** — درس R1:
+//    نافذتان مختلفتان على صفّين جنب بعض في الشاشة الرئيسية بتتقرا عطل.
+//
+//    🔴 **القرار اتاخد وهو عارف الثمن:** الأرضية الثابتة اتحطّت أصلاً عشان
+//    نافذة متحركة قديمة (٣٠ يوم في أداة المرتجعات) كانت بتخفي الطرد المنسي
+//    **بالظبط لما يبقى منسي فعلاً**. الثمن ده لسه صحيح، بس قرار أحمد الصريح
+//    إنه مقبول مقابل استقرار التكلفة — راجع §٩ في الملف المرجعي لتفاصيل
+//    التريد-أوف والبديل المؤجَّل (فهرس D1).
+//    ⚠️ **شبكة الأمان المطلوبة — بند مفتوح، راجع «مسائل مفتوحة».**
+//
+//    ⚠️ **والفرق عن ٣٠ يوم القديمة:** ٢٥٠ يوم (~٨ شهور) — طرد منسي لمدة ٨
+//    شهور حالة أندر بكتير من طرد منسي لمدة شهر.
+//
+// 🔴 **`ROLLING_WINDOW_DAYS` بيتحسب لحظيًا في كل نداء** — مش ثابت وقت
+//    الـ cold start، عشان النافذة تفضل «آخر ٢٥٠ يوم من دلوقتي».
 // ⚠️ **والفلتر على `created_at` مش `updated_at`** — تاريخ **الأوردر** هو
 //    اللي الموظف بيقراه في الجدول وبيتصرّف عليه؛ `updated_at` بيتحرّك مع أي
 //    تعديل (حتى كتابة الميتافيلد بتاعتنا نفسها)، فكان هيدّي أرضية بتتزحلق.
-// ⚠️ **والصيغة `YYYY-MM-DD` بتتقرا UTC عند شوبيفاي** — يوم فرق على أرضية
-//    ثابتة مالوش أثر عملي، فمفيش تحويل توقيت هنا عن قصد.
+// ⚠️ **والصيغة `YYYY-MM-DD` بتتقرا UTC عند شوبيفاي** — الحساب بـUTC مباشرة،
+//    بلا تحويل توقيت القاهرة، لأن فرق يوم على نافذة ٢٥٠ يوم أثره العملي صفر.
 // 🔴 **وهي أرضية عرض — مش شرط أهلية.** الأوردر الأقدم منها **بيتسكن عادي**
 //    والـ Worker بيكتب عليه؛ هو مش في القايمة وبس. ⛔ ممنوع تتحط في
 //    `evaluate`.
-const ORDERS_SINCE = '2026-04-01';
+const ROLLING_WINDOW_DAYS = 250;   // قرار أحمد 19-09-2026 (§٩) — نفس القيمة في أداة المخزن
+function computeOrdersSince() {
+  const ms = Date.now() - ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  return new Date(ms).toISOString().slice(0, 10);   // YYYY-MM-DD — UTC
+}
 const SHOPIFY_API_VERSION = '2026-01';
 
 // ══════════════════════════════════════════════════════════════
@@ -264,23 +280,55 @@ function logParamsFrom(url, tool, sourceTool) {
 // ══════════════════════════════════════════════════════════════
 // §SHOPIFY
 // ══════════════════════════════════════════════════════════════
+// 🔴 **retry/backoff — نفس انضباط `shopifyGQL` بالحرف (قرار أحمد 19-09-2026 ·
+//    §٨② في `docs/query-cost-experiment.md` بريبو الهب).** كانت محاولة واحدة
+//    بس، بينما `shopifyGQL` عندها ٣ محاولات وbackoff. السبب: الخمس Workers
+//    (الطابعة · التغليف · تسليمات بوسطة · تسليمات المكتب · استلام المرتجعات)
+//    بتشارك **نفس الـ Custom App** — قرار ثابت. لما الشاشة الرئيسية بتحمّل
+//    الخمس طوابير بالتوازي، الخمسة بيطلبوا توكن OAuth **متزامن**، وفشل ٤٢٩
+//    لحظي عابر كان بيتحوّل فورًا لفشل كامل بدل ما يتعافى.
+//    ⚠️ **مش بديل عن §٨① (تفريق التوقيت في `index.html`)** — تصحيح عام
+//    للستاك، والاتنين مع بعض هما اللي بيقللوا التزامن الفعلي.
 async function getAccessToken(env) {
-  const resp = await fetch(
-    `https://${env.SHOP_DOMAIN}/admin/oauth/access_token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id:     env.CLIENT_ID,
-        client_secret: env.CLIENT_SECRET,
-        grant_type:    'client_credentials',
-      }),
+  const MAX_ATTEMPTS = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let resp, text;
+    try {
+      resp = await fetch(
+        `https://${env.SHOP_DOMAIN}/admin/oauth/access_token`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id:     env.CLIENT_ID,
+            client_secret: env.CLIENT_SECRET,
+            grant_type:    'client_credentials',
+          }),
+        }
+      );
+      text = await resp.text();
+    } catch (e) {
+      lastErr = new Error(`OAuth: فشل الاتصال بشوبيفاي — ${e.message}`);
+      if (attempt < MAX_ATTEMPTS) { await new Promise(r => setTimeout(r, 400 * attempt)); continue; }
+      throw lastErr;
     }
-  );
-  if (!resp.ok) throw new Error(`OAuth failed: ${resp.status}`);
-  const data = await resp.json();
-  if (!data.access_token) throw new Error('No access_token in response');
-  return data.access_token;
+
+    if (!resp.ok) {
+      const retriable = resp.status === 429 || resp.status >= 500;
+      lastErr = new Error(`OAuth failed: ${resp.status} — ${text.slice(0, 180)}`);
+      if (retriable && attempt < MAX_ATTEMPTS) { await new Promise(r => setTimeout(r, 700 * attempt)); continue; }
+      throw lastErr;
+    }
+
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`OAuth: رد شوبيفاي مش JSON صالح — ${text.slice(0, 180)}`); }
+    if (!data.access_token) throw new Error('No access_token in response');
+    return data.access_token;
+  }
+  throw lastErr || new Error('OAuth: فشل غير معروف');
 }
 
 // ─── §SHOPIFY::shopifyGQL — العقد الإلزامي، منسوخة كما هي ───
@@ -288,7 +336,12 @@ async function getAccessToken(env) {
 // ⚠️ ④ هو الخطير: ميوتيشن بتترفض على مستوى الحقل بترجّع {"errors":[…],"data":null}
 //    و`userErrors` بتبقى `[]` — كود بيفحص `userErrors` بس بيقرا ده **نجاح**.
 let _lastThrottle = null;   // بيتعرض في diag — الاقتراب من السقف مابيبانش غير بانفجار دفعة
-async function shopifyGQL(env, token, query, variables = {}, opName = 'shopify') {
+// 🟡 **إضافة (قرار أحمد 19-09-2026 · §٨④ في `docs/query-cost-experiment.md`
+//    بريبو الهب) — قياس تكلفة الاستعلام الحقيقية، نمط عام مش خاص بأداة
+//    واحدة.** `throttleStatus` بيقول الرصيد المتبقي، **مش** تكلفة النداء
+//    نفسه. `actualQueryCost` هو اللي بيتاكل من الرصيد فعليًا لكل نداء.
+let _lastQueryCost = null;   // { op, requested, actual } — آخر نداء بس، نفس تحفّظ _lastThrottle فوق
+async function shopifyGQL(env, token, query, variables = {}, opName = 'shopify', costLog = null) {
   const MAX_ATTEMPTS = 3;
   let lastErr = null;
 
@@ -331,7 +384,12 @@ async function shopifyGQL(env, token, query, variables = {}, opName = 'shopify')
     }
 
     if (!data.data) throw new Error(`${opName}: رد شوبيفاي بدون data — ${text.slice(0, 180)}`);
-    if (data.extensions?.cost?.throttleStatus) _lastThrottle = data.extensions.cost.throttleStatus;
+    if (data.extensions?.cost) {
+      const c = data.extensions.cost;
+      if (c.throttleStatus) _lastThrottle = c.throttleStatus;
+      _lastQueryCost = { op: opName, requested: c.requestedQueryCost ?? null, actual: c.actualQueryCost ?? null };
+      if (costLog) costLog.push({ op: opName, requested: c.requestedQueryCost ?? null, actual: c.actualQueryCost ?? null });
+    }
     return data;
   }
   throw lastErr || new Error(`${opName}: فشل غير معروف`);
@@ -437,12 +495,12 @@ function shapeOrder(o) {
   };
 }
 
-async function fetchReadyPage(env, token, q) {
+async function fetchReadyPage(env, token, q, opName, costLog) {
   const out = [];
   let after = null, pages = 0, truncated = false;
   while (pages < QUEUE_MAX_PAGES) {
     const data = await shopifyGQL(env, token, QUEUE_QUERY,
-      { q, after, n: QUEUE_PAGE_SIZE }, 'readyOrders');
+      { q, after, n: QUEUE_PAGE_SIZE }, opName, costLog);
     const conn = data.data?.orders;
     if (!conn) throw new Error('readyOrders: رد شوبيفاي بلا `orders`');
     out.push(...(conn.nodes || []));
@@ -461,14 +519,19 @@ async function fetchReadyPage(env, token, q) {
 async function handleReadyQueue(env, request) {
   assertEnv(env, 'shopify');
   const token = await getAccessToken(env);
+  const costLog = [];
 
   // ⚠️ الأرضية بتتحط على **الاستعلامين** — واحد من غيرها معناه إن ماكينة
   //    بتعرض أقدم من التانية، والجدول بيخلط النطاقين بلا أي إشارة.
-  const floor = ` AND created_at:>=${ORDERS_SINCE}`;
+  // 🔴 بتتحسب لحظيًا هنا مش مرة واحدة وقت الـ cold start.
+  const ordersSince = computeOrdersSince();
+  const floor = ` AND created_at:>=${ordersSince}`;
 
   const [a, b] = await Promise.all([
-    fetchReadyPage(env, token, `metafields.custom.manual_status:'${S1_STATUS.READY}'${floor}`),
-    fetchReadyPage(env, token, `metafields.custom.status_2_r_e:'${S2_STATUS.READY}'${floor}`),
+    fetchReadyPage(env, token, `metafields.custom.manual_status:'${S1_STATUS.READY}'${floor}`,
+                   'readyOrders_s1', costLog),
+    fetchReadyPage(env, token, `metafields.custom.status_2_r_e:'${S2_STATUS.READY}'${floor}`,
+                   'readyOrders_s2', costLog),
   ]);
 
   const byId = new Map();
@@ -477,14 +540,22 @@ async function handleReadyQueue(env, request) {
     if (s.orderId) byId.set(s.orderId, s);
   }
 
+  const totalActual = costLog.reduce((s, c) => s + (c.actual || 0), 0);
+
   return json({
     ok: true,
     orders: [...byId.values()],
     truncated: a.truncated || b.truncated,
     // 🔴 الأرضية بترجع في الرد عشان **الواجهة تعرضها من هنا** — مش مكتوبة
     //    بالإيد هناك. رقمان يفترقوا في صمت هو درس R1 بالحرف.
-    ordersSince: ORDERS_SINCE,
+    ordersSince,
     fetchedAt: new Date().toISOString(),
+    // 🟡 نمط عام (§٨④) — للقياس بس، مفيش أي اعتماد عليه من الواجهة.
+    queryCost: {
+      calls: costLog.length,
+      totalActual,
+      detail: costLog,
+    },
   }, 200, request);
 }
 
@@ -832,13 +903,19 @@ async function handleDiag(env, request) {
   }
 
   // ④ أرضية تاريخ الأوردر — معلومة، مش نجاح ولا فشل
-  push(true, 'أرضية تاريخ الأوردر', `الطابور بيعرض أوردرات من ${ORDERS_SINCE} فأحدث · `
+  push(true, 'أرضية تاريخ الأوردر', `نافذة متحرّكة ${ROLLING_WINDOW_DAYS} يوم — الطابور بيعرض `
+    + `أوردرات من ${computeOrdersSince()} فأحدث · `
     + `سقف ${QUEUE_PAGE_SIZE * QUEUE_MAX_PAGES} أوردر لكل ماكينة`,
-    'الأرضية عرض بس — الأوردر الأقدم منها بيتسكن عادي والـ Worker بيكتب عليه');
+    'الأرضية عرض بس — الأوردر الأقدم منها بيتسكن عادي والـ Worker بيكتب عليه. '
+    + 'شبكة الأمان المطلوبة مع النافذة المتحرّكة (تقرير دوري) بند مفتوح — راجع CLAUDE.md');
 
   // ⑤ تكلفة الاستعلام — الاقتراب من السقف مابيبانش غير بانفجار دفعة كاملة
-  push(true, 'تكلفة استعلام شوبيفاي', _lastThrottle
+  push(true, 'رصيد تكلفة الاستعلام (throttleStatus)', _lastThrottle
     ? `currentlyAvailable=${_lastThrottle.currentlyAvailable} / ${_lastThrottle.maximumAvailable} · restoreRate=${_lastThrottle.restoreRate}/s`
+    : 'لسه مفيش استعلام في الاستدعاء ده');
+  // 🟡 نمط عام (§٨④) — `actualQueryCost` تكلفة آخر نداء فعليًا، مش الرصيد المتبقي.
+  push(true, 'تكلفة آخر نداء (actualQueryCost)', _lastQueryCost
+    ? `${_lastQueryCost.op}: requested=${_lastQueryCost.requested} · actual=${_lastQueryCost.actual}`
     : 'لسه مفيش استعلام في الاستدعاء ده');
 
   // ⑥ الأصل
