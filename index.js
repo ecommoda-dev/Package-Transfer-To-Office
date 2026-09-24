@@ -3,8 +3,8 @@
 // Worker: package-transfer-to-office-worker — EcomModa
 // Tool:   قسم تسليمات المكتب (Package Transfer To Office)
 //
-// skills: worker-builder v3.3.0 · constants v2.6.0 · order-lifecycle v1.8.0
-//         · shopify-graphql-helper v1.1.0 · html-builder v6.6.0 — 15-09-2026
+// skills: worker-builder v3.7.1 · constants v3.1.0 · order-lifecycle v1.8.0
+//         · shopify-graphql-helper v1.1.0 · html-builder v6.6.0 — 24-09-2026
 //
 // 🔴 الأداة دي **مالهاش واجهة مستقلة** — الواجهة الوحيدة هي
 //    `office-transfer.html` جوّه `Warehouse-Operations-Center`. الريبو ده
@@ -24,7 +24,7 @@
 //    — صفر قيمة `type` جديدة، فـRule 7 مالهاش نطاق جديد هنا.
 const TOOL_NAME      = 'metafields_change';
 const SOURCE_TOOL    = 'package_transfer_to_office';
-const WORKER_VERSION = '1.2.0';
+const WORKER_VERSION = '1.2.1';
 
 // ══════════════════════════════════════════════════════════════
 // §CONSTANTS
@@ -144,11 +144,72 @@ function cairoParts(d) {
 }
 function cairoDate() { const p = cairoParts(new Date()); return `${p.year}-${p.month}-${p.day}`; }
 
+// ════════════════════════════════════════════════════════════
+// §LOG-REG — الحارس الديناميكي لقيم اللوج (الطبقة ٥ · worker-builder Step 7-ج)
+// ════════════════════════════════════════════════════════════
+// قطعة الأداة دي بس من log-values.json اللي جنبها — بتتحدّث معاه في نفس
+// الـ commit. ممنوع شحن سجل الـ٣٢ أداة هنا (Step 7-ب عن ليه).
+// المفتاح الزوج (tool, type) — الأداة دي بتكتب تحت `metafields_change` (سجل
+// مشترك)، مش تحت اسمها هي، فمقارنة بـ`type` لوحده هتولّد تنبيه كاذب لو أداة
+// تانية من الست كاتبين استخدمت نفس القيمة تحت `tool` مختلف.
+const LOG_REGISTRY = {
+  metafields_change: new Set(['rejected', 'update']),
+};
+
+const isRegisteredLogValue = (tool, type) => !!LOG_REGISTRY[tool]?.has(type);
+
+// UPSERT على (source_tool, tool, type) — صف واحد لكل قيمة، hits بيعدّ.
+// الحدث الكامل مش بيضيع: الصف الأصلي موجود في logs وعليه _unregistered،
+// والجدول ده فهرس مش سجل تاني — عشان كده dedupe مش صف لكل حدث.
+const LOG_ALERT_SQL = `
+  INSERT INTO log_value_alerts
+    (source_tool, tool, type, first_seen, last_seen, hits,
+     worker_version, sample_order_name, sample_employee, sample_notes)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(source_tool, tool, type) DO UPDATE SET
+    last_seen         = excluded.last_seen,
+    hits              = log_value_alerts.hits + excluded.hits,
+    worker_version    = excluded.worker_version,
+    sample_order_name = excluded.sample_order_name,
+    sample_employee   = excluded.sample_employee,
+    sample_notes      = excluded.sample_notes,
+    status            = CASE WHEN log_value_alerts.status = 'ignored'
+                             THEN 'ignored' ELSE 'open' END
+`;
+
+// فشل التنبيه ممنوع يأثر على أي حاجة — try/catch صامت. بتجمّع التكرار جوّه
+// نفس الدفعة في صف واحد (hits) قبل ما تكتب.
+async function noteUnregisteredLogValues(db, entries) {
+  const byPair = new Map();
+  for (const e of entries) {
+    const key = `${e.tool}\u0000${e.type}`;
+    const acc = byPair.get(key);
+    if (acc) { acc.hits++; continue; }
+    byPair.set(key, { entry: e, hits: 1 });
+  }
+  const now = new Date().toISOString();
+  for (const { entry, hits } of byPair.values()) {
+    try {
+      await db.prepare(LOG_ALERT_SQL).bind(
+        SOURCE_TOOL, entry.tool ?? '(بدون tool)', entry.type ?? '(بدون type)',
+        now, now, hits, WORKER_VERSION,
+        entry.orderName ?? null, entry.employee ?? null,
+        entry.notes ? String(entry.notes).slice(0, 200) : null,
+      ).run();
+    } catch (e) { /* متعمّد: التنبيه فهرس، وفشله أهون من تعطيل الأداة */ }
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 // §SHARED — copy verbatim from references/shared-functions.md — never modify
 // ══════════════════════════════════════════════════════════════
 
 async function writeLog(db, entry) {
+  const unregistered = !isRegisteredLogValue(entry.tool, entry.type);
+  const extra = unregistered
+    ? { ...(entry.extra || {}), _unregistered: true }
+    : entry.extra;
+
   await db.prepare(`
     INSERT INTO logs
       (timestamp, tool, type, employee, order_id, order_name,
@@ -167,8 +228,11 @@ async function writeLog(db, entry) {
     entry.valueBefore  ?? null,
     entry.valueAfter   ?? null,
     entry.notes        ?? null,
-    entry.extra ? JSON.stringify(entry.extra) : null
+    extra ? JSON.stringify(extra) : null
   ).run();
+
+  // 🔴 مفيش رفض كتابة أبدًا — الصف اتكتب فعلاً، والتنبيه بعده وبصمت.
+  if (unregistered) await noteUnregisteredLogValues(db, [entry]);
 }
 
 const LOG_EXPORT_MAX = 2000;
