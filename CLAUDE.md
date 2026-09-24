@@ -2,13 +2,13 @@
 
 # قسم تسليمات المكتب — Package Transfer To Office (`Package-Transfer-To-Office`)
 
-![version](https://img.shields.io/badge/worker-v1.2.0-blue)
+![version](https://img.shields.io/badge/worker-v1.2.1-blue)
 
 **بتعمل إيه:** بتسجّل انتقال الطرد من **المخزن للمكتب**. الموظف بيسكن باركود
 الأوردر، والأداة بتكتب `custom.package_whereabouts_s1` (أو `_s2` لدورة
 الاستبدال/الاسترجاع) بقيمة **`Office`**.
 **مين بيستخدمها:** المخزن
-**الإصدار:** `1.2.0` (`WORKER_VERSION` في `index.js`)
+**الإصدار:** `1.2.1` (`WORKER_VERSION` في `index.js`)
 
 > 🔴 **الريبو ده Worker وبس — مفيش واجهة هنا ومفيش نسخة مستقلة** (قرار أحمد
 > 15-09-2026). الواجهة الوحيدة هي **`office-transfer.html`** جوّه
@@ -355,13 +355,13 @@ node docs/office-check.mjs      # ٦٤ بند
 
 | المهارة | الإصدار وقت آخر تعديل |
 |---|---|
-| ecommoda-worker-builder | **v3.3.0** |
-| ecommoda-constants | **v2.6.0** |
+| ecommoda-worker-builder | **v3.7.1** |
+| ecommoda-constants | **v3.1.0** |
 | ecommoda-order-lifecycle | **v1.8.0** |
 | shopify-graphql-helper | **v1.1.0** |
 | ecommoda-html-builder | **v6.6.0** |
 
-آخر مطابقة: 19-09-2026 · الـ Worker `1.2.0`
+آخر مطابقة: 24-09-2026 · الـ Worker `1.2.1`
 🔴 معلّقة: **إنشاء الـ Worker + ربط Builds + `WORKER_SECRET` (سر `warehouse_ops`)
 + `CLIENT_ID`/`CLIENT_SECRET` → Promote** · **تسجيل الأداة ككاتب جديد على
 `metafields_change` في `ecommoda-constants` §7 (بقيمة `extra.sourceTool`)** ·
@@ -370,6 +370,16 @@ node docs/office-check.mjs      # ٦٤ بند
 **شبكة الأمان (تقرير دوري) للنافذة المتحرّكة الجديدة**
 
 ---
+
+آخر تحديث: 24-09-2026 — `1.2.1` (استبدال `check-log-values.mjs` بنسخة مصلَّحة
+بتمسك مفتاح `type` بكل أشكاله (`type:` · `['type']:` · shorthand · محسوب) —
+النسخة القديمة كانت بتعدّي على object shorthand بصمت. تنفيذ الحارس الديناميكي
+لقيم اللوج (الطبقة ٥ · `ecommoda-worker-builder` Step 7-ج) في `writeLog`:
+`LOG_REGISTRY` مبني من `log-values.json`، وأي `(tool, type)` مش مسجّل بيتكتب
+عادي + `extra._unregistered = true` + UPSERT صامت في `log_value_alerts` —
+مفيش رفض كتابة أبدًا. صفر تغيير في المنطق التشغيلي. `check-log-values.mjs`
+بعد الاستبدال طلع نضيف من الأول (لا قيم غير مسجّلة ولا ديناميكية) — القيمتين
+`rejected`/`update` كانوا مسجّلين ومطابقين بالفعل)
 
 آخر تحديث: 19-09-2026 — `1.2.0` (🔴 **§٨+§٩ من `docs/query-cost-experiment.md`
 بريبو الهب — قرار أحمد النهائي.** §٨②: `getAccessToken()` بقت بنفس انضباط
