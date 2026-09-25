@@ -10,8 +10,8 @@
 والـ Worker بيكتب `custom.package_whereabouts_s1` (أو `_s2` لدورة الاستبدال/
 الاسترجاع) بقيمة **`Office`**.
 
-🔗 **الواجهة:** https://ecommoda-dev.github.io/Warehouse-Operations-Center/office-transfer.html
-(صفحة `office-transfer.html` جوّه ريبو `Warehouse-Operations-Center`)
+🔗 **الواجهة:** https://ecommoda-dev.github.io/Warehouse-Operations-Center/Package-Transfer-To-Office.html
+(صفحة `Package-Transfer-To-Office.html` جوّه ريبو `Warehouse-Operations-Center`)
 
 > ⛔ **ممنوع يتضاف `index.html` هنا.** الأداة **مالهاش نسخة مستقلة بقرار**
 > (أحمد · 15-09-2026) — الدخول بيحصل مرة واحدة في الهب، والسر سر مجموعة
