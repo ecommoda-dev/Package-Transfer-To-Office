@@ -11,7 +11,7 @@
 **الإصدار:** `1.2.1` (`WORKER_VERSION` في `index.js`)
 
 > 🔴 **الريبو ده Worker وبس — مفيش واجهة هنا ومفيش نسخة مستقلة** (قرار أحمد
-> 15-09-2026). الواجهة الوحيدة هي **`office-transfer.html`** جوّه
+> 15-09-2026). الواجهة الوحيدة هي **`Package-Transfer-To-Office.html`** جوّه
 > `Warehouse-Operations-Center`. ⛔ ممنوع يتضاف `index.html` هنا: نسخة مستقلة
 > معناها مفتاح `localStorage` تاني وسر تاني وشاشة دخول تانية — وكلهم بنود
 > مفتوحة في الأدوات اللي اتحوّلت للهب، ومفيش سبب نفتحهم من جديد.
@@ -27,7 +27,7 @@
 
 ```
 الـ Worker  : https://package-transfer-to-office-worker.ecommoda-dev.workers.dev
-الواجهة     : https://ecommoda-dev.github.io/Warehouse-Operations-Center/office-transfer.html
+الواجهة     : https://ecommoda-dev.github.io/Warehouse-Operations-Center/Package-Transfer-To-Office.html
 tool في D1  : metafields_change        ← 🔴 سجل **مشترك**
 extra.sourceTool : package_transfer_to_office   ← ده اللي بيفصل الأداة عن غيرها
 مجموعة السر : warehouse_ops          ← 🔴 مش سر فريد للأداة دي
@@ -371,7 +371,12 @@ node docs/office-check.mjs      # ٦٤ بند
 
 ---
 
-آخر تحديث: 24-09-2026 — `1.2.1` (استبدال `check-log-values.mjs` بنسخة مصلَّحة
+آخر تحديث: 25-09-2026 — **صفحة الهب اتسمّت تاني.** رابط الصفحة جوّه
+`Warehouse-Operations-Center` بقى `Package-Transfer-To-Office.html` بدل
+`office-transfer.html` — قاعدة جديدة هناك: رابط أي أداة مدمجة يتاخد بالنص
+من اسم ريبو الـ Worker بتاعها. صفر تعديل Worker هنا — تحديث توثيقي بحت.
+
+24-09-2026 — `1.2.1` (استبدال `check-log-values.mjs` بنسخة مصلَّحة
 بتمسك مفتاح `type` بكل أشكاله (`type:` · `['type']:` · shorthand · محسوب) —
 النسخة القديمة كانت بتعدّي على object shorthand بصمت. تنفيذ الحارس الديناميكي
 لقيم اللوج (الطبقة ٥ · `ecommoda-worker-builder` Step 7-ج) في `writeLog`:
